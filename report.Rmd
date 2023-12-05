@@ -42,3 +42,89 @@ The existing treatment options includes local destruction of the tumor, organ re
 
 RNA Sequencing (RNA-seq) using the capabilities of high-throughput sequencing methods provides insight into the transcriptome of a cell. Through understanding the gene expression patterns reflected by RNA sequencing results, we aim to locate indicator genes for LIHC with the help of machine learning modeling. Furthermore, given the massive amount of existing genes in human genome, our problem can be formulated as a high-dimensional problem. One of our side goal is to perform variable selection to reduce the risk of overfitting.
 
+# Methods
+
+## LIHC data from TCGA
+
+We're primarily interested in analyzing RNA-seq data provided through The Cancer Genome Atlas (TCGA) for liver cancer patients. The dataset includes data from 424 LIHC participants and around 60,660 genes for expression level analysis. The inclusion of both normal and tumor samples allows us for comparative analysis between cancerous and non-cancerous liver tissues.
+
+Three main functions help the process to download and prepare TCGA data from TCGAbiolinks. First, use the `GDCquery` in R to do a query on the TCGA database. It established the connection between local computing site and the database for future exploration. Then, `GDCdownload` downloads raw versions of the desired files and R data structures are built by applying `GDCprepare` functions.
+
+```{r, message=FALSE}
+query_TCGA_LIHC = GDCquery(
+  project = "TCGA-LIHC",
+  data.category = "Transcriptome Profiling", # parameter enforced by GDCquery
+  experimental.strategy = "RNA-Seq",
+  workflow.type = "STAR - Counts",
+  data.type = 'Gene Expression Quantification')
+  
+GDCdownload(query = query_TCGA_LIHC)
+
+tcga_data_LIHC = GDCprepare(query_TCGA_LIHC)
+# transform a large summarized experiment into readable matrix for analysis
+count=assay(tcga_data_LIHC)
+```
+
+```{r}
+## we have 60660 genes expression data and 424 samples
+dim(count)
+```
+
+Normalization for reads count help account for gene length and sequencing depth. Fragments Per Kilobase of transcript per Million mapped reads (FPKM) provides a comparable measure to interpret and utilize RNA-seq results. We standardized our data into FPKM format for fair representation and comparison gene expressions.
+
+```{r}
+## load gene annotation data
+file.annotations <- system.file("extdata",
+                                "Biomart.annotations.hg38.txt", 
+                                package="countToFPKM")
+gene.annotations <- read.table(file.annotations, sep="\t", header=TRUE)
+
+## combine gene annotation and expression data
+genelength=data.frame(gene=gene.annotations$Gene_ID,
+                  length=gene.annotations$length,
+                  type=gene.annotations$Gene_type)
+
+rownames(count)<-substring(rownames(count),1,15)
+df_temp = merge(genelength, count, by.x="gene",by.y="row.names")
+
+## FPKM calculation by hand
+countToFpkm <- function(counts, effLen)
+{
+  N <- sum(counts)
+  exp( log(counts) + log(1e9) - log(effLen) - log(N) )
+}
+
+df<-countToFpkm(df_temp[,-c(1:3)], df_temp$length)
+rownames(df)<-df_temp$gene
+```
+## Preprocessing
+
+We collected the sample IDs from normal samples and from tumor samples separately and retrieved their index for future train-test dataset split. In summary, out of 424 samples, there are 50 normal samples and 374 tumor samples. This suggests we consider additional metrics such as precision, F1, or AUC-ROC scores to account for potential bias introduced by the imbalanced labels aside from crude accuracy for classification tasks.
+
+```{r}
+## retrieve the label for each sample
+sample_ID = colnames(df)
+tumor_sample_ID = sample_ID[which(substring(sample_ID,14,15)!=11)]
+normal_sample_ID = sample_ID[which(substring(sample_ID,14,15)==11)]
+
+## index for each label group
+tumor_index = which(sample_ID %in% tumor_sample_ID)
+normal_index = which(sample_ID %in% normal_sample_ID)
+label = rep(0, length(sample_ID))
+label[tumor_index] = 1
+label = factor(label, labels = c("normal", "tumor"))
+table(label)
+```
+
+
+```{r}
+## prepare the input matrix for future analysis
+X = as.matrix(t(df))
+```
+
+## Variable selection
+
+```{r}
+
+```
+
