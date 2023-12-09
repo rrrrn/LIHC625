@@ -1,7 +1,10 @@
 ---
 title: "Analysis of Liver Hepatocellular Carcinoma Data in R"
 author: 'Bo Yang, Rui Nie, Yueying Hu'
-output: pdf_document
+output: 
+  pdf_document:
+    fig_width: 3
+    fig_height: 2
 ---
 
 
@@ -36,24 +39,22 @@ library("org.Hs.eg.db")
 # Introduction
 
 Hepatocellular carcinoma (LIHC/HCC) is the one of the leading cause of cancer death, which accounts for 8.2% of global cancer incidence and 4.7% of cancer-related
-mortality []. Due to the high mortality rate, the research on this specific cancer type is significant. Previous study suggested that lifestyles and personal habits, including drinking alcohol, smoking, are positively associated with the onset LIHC [], which has greatly enhanced the efficiency of screening for the disease by health providers. Nevertheless, the difficulty for disease detection remains alarmingly high and current median survival spans around 6 to 20 months. Under such circumstances, an indicator with higher sensitivity would advance the diagnosis stage prolong patients' survival.
+mortality []. Previous study suggested that lifestyles and personal habits, including drinking alcohol, smoking, are positively associated with the onset LIHC [], which has greatly enhanced the efficiency of screening for the disease by health providers. Nevertheless, the difficulty for disease detection remains alarmingly high. Therefore, an indicator with higher sensitivity would advance the diagnosis stage and prolong patients' survival.
 
-The existing treatment options includes local destruction of the tumor, organ replacement, or surgical removal of the tumor. Despite their healing effects and improvement of the quality of life, treatment such as chemotherapy and drug intakes may introduce significant side effects. This reinforces the importance of identifying a predictive biomarker for LIHC. 
-
-RNA Sequencing (RNA-seq) using the capabilities of high-throughput sequencing methods provides insight into the transcriptome of a cell. Through understanding the gene expression patterns reflected by RNA sequencing results, we aim to locate indicator genes for LIHC with the help of machine learning modeling. Furthermore, given the massive amount of existing genes in human genome, our problem can be formulated as a high-dimensional problem. One of our side goal is to perform variable selection to reduce the risk of overfitting.
+RNA Sequencing (RNA-seq) using the capabilities of high-throughput sequencing methods provides insight into the transcriptome of a cell. Through understanding the gene expression patterns reflected by RNA sequencing results, we aim to locate indicator genes for LIHC with the help of statistical learning methods Furthermore, given the massive amount of existing genes in human genome, our problem can be formulated as a high-dimensional problem. One of our side goal is to perform variable selection to reduce the risk of overfitting.
 
 # Methods
 
 ## LIHC data from TCGA
 
-We're primarily interested in analyzing RNA-seq data provided through The Cancer Genome Atlas (TCGA) for liver cancer patients. The dataset includes data from 424 LIHC participants and around 60,660 genes for expression level analysis. The inclusion of both normal and tumor samples allows us for comparative analysis between cancerous and non-cancerous liver tissues.
+We're primarily interested in analyzing RNA-seq data provided through The Cancer Genome Atlas (TCGA) for liver cancer patients. The dataset includes data from 424 LIHC participants and over 20,000 genes for expression level analysis. The inclusion of both normal and tumor samples allows us for comparative analysis between cancerous and non-cancerous liver tissues.
 
-Three main functions help the process to download and prepare TCGA data from TCGAbiolinks. First, use the `GDCquery` in R to do a query on the TCGA database. It established the connection between local computing site and the database for future exploration. Then, `GDCdownload` downloads raw versions of the desired files and R data structures are built by applying `GDCprepare` functions.
+To download and prepare the LIHC data from TCGAbiolinks, we used `GDCquery`, `GDCdownload`, and `GDCprepare` functions for data accessing.
 
 ```{r, message=FALSE}
 query_TCGA_LIHC = GDCquery(
   project = "TCGA-LIHC",
-  data.category = "Transcriptome Profiling", # parameter enforced by GDCquery
+  data.category = "Transcriptome Profiling", 
   experimental.strategy = "RNA-Seq",
   workflow.type = "STAR - Counts",
   data.type = 'Gene Expression Quantification')
@@ -61,13 +62,8 @@ query_TCGA_LIHC = GDCquery(
 GDCdownload(query = query_TCGA_LIHC)
 
 tcga_data_LIHC = GDCprepare(query_TCGA_LIHC)
-# transform a large summarized experiment into readable matrix for analysis
+# transform a large summarized experiment into readable matrix
 count=assay(tcga_data_LIHC)
-```
-
-```{r}
-## we have 60660 genes expression data and 424 samples
-dim(count)
 ```
 
 Normalization for reads count help account for gene length and sequencing depth. Fragments Per Kilobase of transcript per Million mapped reads (FPKM) provides a comparable measure to interpret and utilize RNA-seq results. We standardized our data into FPKM format for fair representation and comparison gene expressions.
@@ -95,8 +91,9 @@ countToFpkm <- function(counts, effLen)
 }
 
 df<-countToFpkm(df_temp[,-c(1:3)], df_temp$length)
-rownames(df)<-df_temp$gene
+rownames(df)<-df_temp$gene; X = as.matrix(t(df));dim(df)
 ```
+
 ## Preprocessing
 
 We collected the sample IDs from normal samples and from tumor samples separately and retrieved their index for future train-test dataset split. In summary, out of 424 samples, there are 50 normal samples and 374 tumor samples. This suggests we consider additional metrics such as precision, F1, or AUC-ROC scores to account for potential bias introduced by the imbalanced labels aside from crude accuracy for classification tasks.
@@ -110,21 +107,83 @@ normal_sample_ID = sample_ID[which(substring(sample_ID,14,15)==11)]
 ## index for each label group
 tumor_index = which(sample_ID %in% tumor_sample_ID)
 normal_index = which(sample_ID %in% normal_sample_ID)
-label = rep(0, length(sample_ID))
-label[tumor_index] = 1
-label = factor(label, labels = c("normal", "tumor"))
-table(label)
+label = rep(0, length(sample_ID)); label[tumor_index] = 1
+label = factor(label, labels = c("normal", "tumor")); table(label)
 ```
 
+## Variable Selection
+
+Of all the variables (genes) selected for our preprocessed data, we'd like to filter out the ones with constant values across samples, as they provide no information in differentiating tumor samples from normal samples. This leads to the removal of 381 genes from the entire sample.
 
 ```{r}
-## prepare the input matrix for future analysis
-X = as.matrix(t(df))
+sd_x = apply(X, 2, sd)
+ind = which(sd_x == 0)
+X = X[, -ind];length(ind)
 ```
 
-## Variable selection
+For dimension reduction, we visualized samples with different labels through principle components analysis, which linearly combined all input variables to form principle component according to their variance in a descending order. We plotted all samples according to their fist and second principle component, which explained a total of 24.89% variance across all genes. The clustering of tumor samples indicates that tumor samples may have a shared gene expression pattern. 
+
+```{r, cache = TRUE, fig.width=6, fig.height=2.5}
+res.pca = PCA(X, scale.unit = TRUE, graph = FALSE)
+eigenvalue = get_eigenvalue(res.pca); head(eigenvalue[,3], 2)
+fviz_pca_ind(res.pca, axes = c(1, 2), col.ind = label, label = FALSE)
+```
+
+A dataset having as many as 19682 covariates versus only 424 samples can be regarded as a high-dimensional problem and have a strong tendency to cause overfit in prediction models. 
+
+To select variables while maintaining interpretation along the process, we will use the variance filtering method to select genes with a more variable expression activity from the samples we included. We kept the variance cutoff to be as high as 0.95, leaving only 5% (1004) of the original genes for future statistical analysis.
 
 ```{r}
+Xnew = t(varFilter(t(X), var.func=IQR, var.cutoff = 0.95, filterByQuantile = TRUE));dim(Xnew)
+```
 
+## Statistical Leaning
+
+For building predictive statistical learning methods in LIHC classification, we continue with 985 selected genes using Elastic Net, decision tree, and random forest and assess their performances under the idea of train-test split validation. We will also use cross-validation to tune the hyperparameters for each model and compare their performances in terms of accuracy, precision, recall, F1 score, and AUC-ROC score.
+
+# Results
+
+## Train-Test Split
+
+Considering the imbalanced labels of two classes, it is important to preserve the representation of both classes in the training and testing samples to ensure the model is not overly biasing towards one class over the other. As a consequence, we use `createDataPartition` to create a stratified split for training and testing purposes with a 3:1 ratio. 
+
+```{r}
+## statistical learning
+set.seed(123)
+train_index = createDataPartition(label, p = 0.75, list = FALSE)
+trainX = Xnew[train_index, ]; testX = Xnew[-train_index, ]
+train_label = label[train_index]; test_label = label[-train_index]
+```
+
+## Elastic Net
+
+Elastic Net is a penalized regression method that combines the L1 and L2 penalties of Lasso and Ridge regression. The L1 penalty suppress the coefficients of some variables to zero, which is equivalent to variable selection. The L2 penalty shrinks the coefficients of some variables towards a smaller scale. We take the idea of logistic regression and use below formula as the loss function for Elastic Net in classification problems:
+
+$$
+\min_{\beta_0, \beta} \frac{1}{N} \sum_{i=1}^N \log(1 + \exp(-y_i(\beta_0 + x_i^T \beta))) + \lambda \left[ \frac{1}{2} (1 - \alpha) \sum_{j=1}^p \beta_j^2 + \alpha \sum_{j=1}^p |\beta_j| \right]
+$$
+We determine the alpha and lambda coefficient through grid search, where alpha determines the balance between L1 and L2 penalty and lambda determines the strength of the penalty.
+
+```{r, warning=FALSE, message=FALSE}
+## grid search for hyperparameter tuning
+set.seed(123)
+alpha_grid = seq(0, 1, 0.1)
+lambda_grid = seq(0.001, 0.1, 0.001)
+cv_control <- trainControl(method = "cv", number = 5,classProbs = TRUE)
+elastic <- train(x = trainX, y = train_label, method = "glmnet", 
+  trControl = cv_control, family = "binomial", tuneGrid = expand.grid(alpha = alpha_grid, lambda = lambda_grid))
+elastic$bestTune
+```
+
+```{r}
+## Evaluate the performance of Elastic Net
+set.seed(123)
+elastic_model = glmnet(trainX, train_label, family="binomial", alpha = 0.2, lambda = 0.036)
+elastic_pred = predict(elastic_model, testX, type = "class")
+result.elastic = confusionMatrix(factor(elastic_pred), test_label)$byClass[c(1, 4, 5, 6, 7)]
+## Variables selected by Elastic Net
+coef.elastic = coef(elastic_model, s = "lambda.min")
+coef.elastic = coef.elastic[coef.elastic[,1]!=0,];head(coef.elastic, 5)
+length(coef.elastic[-1])
 ```
 
