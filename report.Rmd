@@ -5,6 +5,8 @@ output:
   pdf_document:
     fig_width: 3
     fig_height: 2
+
+bibliography: references.bib 
 ---
 
 ```{r, setup, message=FALSE, include=FALSE}
@@ -41,7 +43,7 @@ library("org.Hs.eg.db")
 # Introduction
 
 Hepatocellular carcinoma (LIHC/HCC) is the one of the leading cause of cancer death, which accounts for 8.2% of global cancer incidence and 4.7% of cancer-related
-mortality []. Previous study suggested that lifestyles and personal habits, including drinking alcohol, smoking, are positively associated with the onset LIHC [], which has greatly enhanced the efficiency of screening for the disease by health providers. Nevertheless, the difficulty for disease detection remains alarmingly high. Therefore, an indicator with higher sensitivity would advance the diagnosis stage and prolong patients' survival.
+mortality [@fitzmaurice2017global] Previous study suggested that lifestyles and personal habits, including drinking alcohol, smoking, are positively associated with the onset LIHC [@kuper2000tobacco], which has greatly enhanced the efficiency of screening for the disease by health providers. Nevertheless, the difficulty for disease detection remains alarmingly high. Therefore, an indicator with higher sensitivity would advance the diagnosis stage and prolong patients' survival.
 
 RNA Sequencing (RNA-seq) using the capabilities of high-throughput sequencing methods provides insight into the transcriptome of a cell. Through understanding the gene expression patterns reflected by RNA sequencing results, we aim to locate indicator genes for LIHC with the help of statistical learning methods Furthermore, given the massive amount of existing genes in human genome, our problem can be formulated as a high-dimensional problem. One of our side goal is to perform variable selection to reduce the risk of overfitting.
 
@@ -49,16 +51,11 @@ RNA Sequencing (RNA-seq) using the capabilities of high-throughput sequencing me
 
 ## LIHC data from TCGA
 
-We're primarily interested in analyzing RNA-seq data provided through The Cancer Genome Atlas (TCGA) for liver cancer patients. The dataset includes data from 424 LIHC participants and over 20,000 genes for expression level analysis. The inclusion of both normal and tumor samples allows us for comparative analysis between cancerous and non-cancerous liver tissues.
+We're primarily interested in analyzing RNA-seq data provided through The Cancer Genome Atlas (TCGA) for liver cancer patients. The dataset includes data from 424 LIHC participants and over 20,000 genes for expression level analysis. The inclusion of both normal and tumor samples allows us for comparative analysis between cancerous and non-cancerous liver tissues. We used `GDCquery`, `GDCdownload`, and `GDCprepare` functions for data accessing to download and prepare the LIHC data from TCGAbiolinks.
 
-To download and prepare the LIHC data from TCGAbiolinks, we used `GDCquery`, `GDCdownload`, and `GDCprepare` functions for data accessing.
-
-```{r, message=FALSE}
-query_TCGA_LIHC = GDCquery(
-  project = "TCGA-LIHC",
-  data.category = "Transcriptome Profiling", 
-  experimental.strategy = "RNA-Seq",
-  workflow.type = "STAR - Counts",
+```{r, message=FALSE, results='hide'}
+query_TCGA_LIHC = GDCquery(project = "TCGA-LIHC", data.category = "Transcriptome Profiling", 
+  experimental.strategy = "RNA-Seq", workflow.type = "STAR - Counts", 
   data.type = 'Gene Expression Quantification')
   
 GDCdownload(query = query_TCGA_LIHC)
@@ -72,8 +69,7 @@ Normalization for reads count help account for gene length and sequencing depth.
 
 ```{r}
 ## load gene annotation data
-file.annotations <- system.file("extdata",
-                                "Biomart.annotations.hg38.txt", 
+file.annotations <- system.file("extdata", "Biomart.annotations.hg38.txt", 
                                 package="countToFPKM")
 gene.annotations <- read.table(file.annotations, sep="\t", header=TRUE)
 
@@ -123,7 +119,7 @@ ind = which(sd_x == 0)
 X = X[, -ind];length(ind)
 ```
 
-To select variables while maintaining interpretation along the process, we will use the variance filtering method to select genes with a more variable expression activity from the samples we included. We kept the variance cutoff to be as high as 0.95, leaving only 5% (1004) of the original genes for future statistical analysis.
+To select variables while maintaining interpretation along the process, we will use the variance filtering method to select genes with a more variable expression activity from the samples we included. We kept the variance cutoff to be as high as 0.95, leaving only 5% (985) of the original genes for future statistical analysis.
 
 ```{r}
 Xnew = t(varFilter(t(X), var.func=IQR, var.cutoff = 0.95, filterByQuantile = TRUE));dim(Xnew)
@@ -160,8 +156,8 @@ set.seed(123)
 alpha_grid = seq(0, 1, 0.1)
 lambda_grid = seq(0.001, 0.1, 0.001)
 cv_control <- trainControl(method = "cv", number = 5,classProbs = TRUE)
-elastic <- train(x = trainX, y = train_label, method = "glmnet", 
-  trControl = cv_control, family = "binomial", tuneGrid = expand.grid(alpha = alpha_grid, lambda = lambda_grid))
+elastic <- train(x = trainX, y = train_label, method = "glmnet", trControl = cv_control, 
+  family = "binomial", tuneGrid = expand.grid(alpha = alpha_grid, lambda = lambda_grid))
 elastic$bestTune
 ```
 
@@ -178,8 +174,7 @@ variables <- row.names(coef.elastic)[idx]
 variables <- variables[!variables %in% c('(Intercept)')]
 names = rownames(rowData(tcga_data_LIHC))
 names = gsub("\\..*","", names)
-genes <- rowData(tcga_data_LIHC)[which(variables %in% names), "gene_name"]
-genes[1:10]
+genes <- rowData(tcga_data_LIHC)[which(variables %in% names), "gene_name"]; genes[1:10]
 ```
 
 ## Decision Tree
@@ -192,8 +187,7 @@ rt = rpart(train_label~., data = data.frame(trainX))
 cp = rt$cptable[which.min(rt$cptable[,"xerror"]),"CP"]
 rt.prune = prune(rt, cp = cp)
 variables <- rt.prune$variable.importance[order(rt.prune$variable.importance, decreasing = TRUE)]
-genes <- rowData(tcga_data_LIHC)[which(names(variables) %in% names), "gene_name"]
-genes
+genes <- rowData(tcga_data_LIHC)[which(names(variables) %in% names), "gene_name"]; genes
 ```
 
 ```{r}
@@ -218,11 +212,9 @@ Further, we explore the the variable importance, we consider two types of measur
 ```{r}
 imp <- rf$importance
 variables <- names(head(sort(imp[, 3], decreasing = T)))
-genes <- rowData(tcga_data_LIHC)[which(variables %in% names), "gene_name"]
-genes
+genes <- rowData(tcga_data_LIHC)[which(variables %in% names), "gene_name"]; genes
 variables <- names(head(sort(imp[, 4], decreasing = T)))
-genes <- rowData(tcga_data_LIHC)[which(variables %in% names), "gene_name"]
-genes
+genes <- rowData(tcga_data_LIHC)[which(variables %in% names), "gene_name"]; genes
 ```
 
 ## Discussion
@@ -243,4 +235,5 @@ plot.roc(test_label, rf_prob[,2], percent=TRUE, col="#b237b8", lty=2, lwd=2, pri
 legend("bottomright", legend=c("Elastic Net", "Decision Tree", "Random Forest"), col=c("#377eb8", "#4daf4a","#b237b8"), lwd=2)
 ```
 
+## References
 
