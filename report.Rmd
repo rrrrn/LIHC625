@@ -7,6 +7,9 @@ output:
     fig_height: 2
 ---
 
+```{r, setup, message=FALSE, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE, fig.width=6, fig.height=4)
+```
 
 ```{r, message=FALSE, include=FALSE}
 rm(list = ls())
@@ -15,8 +18,6 @@ library("TCGAbiolinks")
 library("limma")
 library("edgeR")
 library("glmnet")
-library("factoextra") # PCA
-library("FactoMineR") # PCA
 library("caret")
 library("SummarizedExperiment")
 library("gplots")
@@ -29,6 +30,7 @@ library("jsonlite")
 library("rpart")
 library("rpart.plot")
 library("randomForest")
+library("pROC")
 library("data.table")
 library("clusterProfiler")
 library("org.Hs.eg.db") 
@@ -121,16 +123,6 @@ ind = which(sd_x == 0)
 X = X[, -ind];length(ind)
 ```
 
-For dimension reduction, we visualized samples with different labels through principle components analysis, which linearly combined all input variables to form principle component according to their variance in a descending order. We plotted all samples according to their fist and second principle component, which explained a total of 24.89% variance across all genes. The clustering of tumor samples indicates that tumor samples may have a shared gene expression pattern. 
-
-```{r, cache = TRUE, fig.width=6, fig.height=2.5}
-res.pca = PCA(X, scale.unit = TRUE, graph = FALSE)
-eigenvalue = get_eigenvalue(res.pca); head(eigenvalue[,3], 2)
-fviz_pca_ind(res.pca, axes = c(1, 2), col.ind = label, label = FALSE)
-```
-
-A dataset having as many as 19682 covariates versus only 424 samples can be regarded as a high-dimensional problem and have a strong tendency to cause overfit in prediction models. 
-
 To select variables while maintaining interpretation along the process, we will use the variance filtering method to select genes with a more variable expression activity from the samples we included. We kept the variance cutoff to be as high as 0.95, leaving only 5% (1004) of the original genes for future statistical analysis.
 
 ```{r}
@@ -139,16 +131,13 @@ Xnew = t(varFilter(t(X), var.func=IQR, var.cutoff = 0.95, filterByQuantile = TRU
 
 ## Statistical Leaning
 
-For building predictive statistical learning methods in LIHC classification, we continue with 985 selected genes using Elastic Net, decision tree, and random forest and assess their performances under the idea of train-test split validation. We will also use cross-validation to tune the hyperparameters for each model and compare their performances in terms of accuracy, precision, recall, F1 score, and AUC-ROC score.
-
-# Results
+For building predictive statistical learning methods in LIHC classification, we continue with 985 selected genes using Elastic Net, decision tree, and random forest and assess their performances under the idea of train-test split validation. We will also use cross-validation to tune the hyperparameters for each model and compare their performances in terms of specificity, sensitivity, precision, F1, and AUC-ROC scores.
 
 ## Train-Test Split
 
 Considering the imbalanced labels of two classes, it is important to preserve the representation of both classes in the training and testing samples to ensure the model is not overly biasing towards one class over the other. As a consequence, we use `createDataPartition` to create a stratified split for training and testing purposes with a 3:1 ratio. 
 
 ```{r}
-## statistical learning
 set.seed(123)
 train_index = createDataPartition(label, p = 0.75, list = FALSE)
 trainX = Xnew[train_index, ]; testX = Xnew[-train_index, ]
@@ -162,6 +151,7 @@ Elastic Net is a penalized regression method that combines the L1 and L2 penalti
 $$
 \min_{\beta_0, \beta} \frac{1}{N} \sum_{i=1}^N \log(1 + \exp(-y_i(\beta_0 + x_i^T \beta))) + \lambda \left[ \frac{1}{2} (1 - \alpha) \sum_{j=1}^p \beta_j^2 + \alpha \sum_{j=1}^p |\beta_j| \right]
 $$
+
 We determine the alpha and lambda coefficient through grid search, where alpha determines the balance between L1 and L2 penalty and lambda determines the strength of the penalty.
 
 ```{r, warning=FALSE, message=FALSE}
@@ -180,10 +170,77 @@ elastic$bestTune
 set.seed(123)
 elastic_model = glmnet(trainX, train_label, family="binomial", alpha = 0.2, lambda = 0.036)
 elastic_pred = predict(elastic_model, testX, type = "class")
-result.elastic = confusionMatrix(factor(elastic_pred), test_label)$byClass[c(1, 4, 5, 6, 7)]
+result.elastic = confusionMatrix(factor(elastic_pred), test_label)$byClass[c(1, 2, 5, 7)]
 ## Variables selected by Elastic Net
 coef.elastic = coef(elastic_model, s = "lambda.min")
-coef.elastic = coef.elastic[coef.elastic[,1]!=0,];head(coef.elastic, 5)
-length(coef.elastic[-1])
+idx = which(coef.elastic[,1]!=0)
+variables <- row.names(coef.elastic)[idx]
+variables <- variables[!variables %in% c('(Intercept)')]
+names = rownames(rowData(tcga_data_LIHC))
+names = gsub("\\..*","", names)
+genes <- rowData(tcga_data_LIHC)[which(variables %in% names), "gene_name"]
+genes[1:10]
 ```
+
+## Decision Tree
+
+Decision Tree is a non-parametric supervised learning method that can be used for both classification and regression problems. It works by recursively partitioning the data into smaller subsets based on the most significant variable at each step. The partitioning process is repeated until the data is completely separated or the stopping criteria is met. We displayed the gene names of the most important variables selected by Decision Tree.
+
+```{r}
+## Pruning the tree by ten-fold cross validation
+rt = rpart(train_label~., data = data.frame(trainX))
+cp = rt$cptable[which.min(rt$cptable[,"xerror"]),"CP"]
+rt.prune = prune(rt, cp = cp)
+variables <- rt.prune$variable.importance[order(rt.prune$variable.importance, decreasing = TRUE)]
+genes <- rowData(tcga_data_LIHC)[which(names(variables) %in% names), "gene_name"]
+genes
+```
+
+```{r}
+## Evaluate the performance of Decision Tree
+rt_pred = predict(rt.prune, newdata = data.frame(testX), type = "class")
+result.decision = confusionMatrix(factor(rt_pred), test_label)$byClass[c(1, 2, 5, 7)]
+```
+
+## Random Forest
+Random Forest is an ensemble learning method that combines multiple decision trees to improve the performance of the model. It works by building multiple decision trees on different subsets of the data and then averaging the predictions of all the trees. The random forest model is more robust to overfitting and less sensitive to outliers than a single decision tree. Here, we use the `randomForest` function to build the random forest model and tune the hyperparameters by cross validation. 
+
+```{r}
+set.seed(123)
+rf = randomForest(x = trainX, y = train_label, importance=TRUE)
+## Evaluate the performance of Random Forest
+rf.pred = predict(rf, newdata = testX)
+result.rf = confusionMatrix(factor(rf.pred), test_label)$byClass[c(1, 2, 5, 7)]
+```
+
+Further, we explore the the variable importance, we consider two types of measure of variable importance: Mean Decrease Accuracy and Mean Decrease Gini. We see the gene TSPAN6 is the most important predictor in Mean Decrease Accuracy and in Mean Decrease Gini, which is consistent with the results of the decision tree and elastic net regression. 
+
+```{r}
+imp <- rf$importance
+variables <- names(head(sort(imp[, 3], decreasing = T)))
+genes <- rowData(tcga_data_LIHC)[which(variables %in% names), "gene_name"]
+genes
+variables <- names(head(sort(imp[, 4], decreasing = T)))
+genes <- rowData(tcga_data_LIHC)[which(variables %in% names), "gene_name"]
+genes
+```
+
+## Discussion
+Overall, the three statistical learning methods have similar performance in terms of specificity and raw accuracy, and they all successfully identify similar genes as the most important predictors ("TSPAN6", "TNMD", "DPM1", "SCYL3", "C1orf112", "FGR"). However, the single decision tree model has the lowest sensitivity, F1 score, and AUC-ROC score, which indicates that the model is overfitting. Comparably, the elastic net regression model and the random forest model are more robust to such unbalanced dataset.
+
+```{r}
+data.frame(elastic = result.elastic, decision = result.decision, rf = result.rf)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, results='hide', out.width="50%"}
+## Plot the ROC curves
+elastic_prob = predict(elastic_model, testX, type = "response")
+roc(test_label, elastic_prob, plot=TRUE, legacy.axes=TRUE, percent=TRUE, xlab="False Positive Percentage", ylab="True Postive Percentage", col="#377eb8", lwd=2, print.auc=TRUE)
+decision_prob = predict(rt.prune, newdata = data.frame(testX), type = "prob")
+plot.roc(test_label, decision_prob[,2], percent=TRUE, col="#4daf4a", lwd=2, print.auc=TRUE, add=TRUE, print.auc.y=30)
+rf_prob = predict(rf, newdata = testX, type = "prob")
+plot.roc(test_label, rf_prob[,2], percent=TRUE, col="#b237b8", lty=2, lwd=2, print.auc=TRUE, add=TRUE, print.auc.y=40)
+legend("bottomright", legend=c("Elastic Net", "Decision Tree", "Random Forest"), col=c("#377eb8", "#4daf4a","#b237b8"), lwd=2)
+```
+
 
