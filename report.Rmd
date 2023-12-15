@@ -5,7 +5,16 @@ output:
   pdf_document:
     fig_width: 3
     fig_height: 2
-
+    latex_engine: xelatex
+header-includes:
+  - \usepackage{geometry}
+  - \geometry{left=0.6in, right=0.6in, top=0.6in, bottom=0.6in}
+  - \usepackage{setspace}
+  - \singlespacing
+  - \usepackage{enumitem}
+  - \setlist[itemize]{noitemsep, topsep=0pt}
+  - \setlist[enumerate]{noitemsep, topsep=0pt}
+fontsize: 8pt
 bibliography: references.bib 
 ---
 
@@ -39,11 +48,9 @@ library("org.Hs.eg.db")
 # library(countToFPKM)
 ```
 
-
 # Introduction
 
-Hepatocellular carcinoma (LIHC/HCC) is the one of the leading cause of cancer death, which accounts for 8.2% of global cancer incidence and 4.7% of cancer-related
-mortality [@fitzmaurice2017global] Previous study suggested that lifestyles and personal habits, including drinking alcohol, smoking, are positively associated with the onset LIHC [@kuper2000tobacco], which has greatly enhanced the efficiency of screening for the disease by health providers. Nevertheless, the difficulty for disease detection remains alarmingly high. Therefore, an indicator with higher sensitivity would advance the diagnosis stage and prolong patients' survival.
+Hepatocellular carcinoma (LIHC/HCC) is the one of the leading cause of cancer death, which accounts for 8.2% of global cancer incidence and 4.7% of cancer-related mortality [@fitzmaurice2017global] Previous study suggested that lifestyles and personal habits, including drinking alcohol, smoking, are positively associated with the onset LIHC [@kuper2000tobacco], which has greatly enhanced the efficiency of screening for the disease by health providers. Nevertheless, the difficulty for disease detection remains alarmingly high. Therefore, an indicator with higher sensitivity would advance the diagnosis stage and prolong patients' survival.
 
 RNA Sequencing (RNA-seq) using the capabilities of high-throughput sequencing methods provides insight into the transcriptome of a cell. Through understanding the gene expression patterns reflected by RNA sequencing results, we aim to locate indicator genes for LIHC with the help of statistical learning methods Furthermore, given the massive amount of existing genes in human genome, our problem can be formulated as a high-dimensional problem. One of our side goal is to perform variable selection to reduce the risk of overfitting.
 
@@ -127,11 +134,7 @@ Xnew = t(varFilter(t(X), var.func=IQR, var.cutoff = 0.95, filterByQuantile = TRU
 
 ## Statistical Leaning
 
-For building predictive statistical learning methods in LIHC classification, we continue with 985 selected genes using Elastic Net, decision tree, and random forest and assess their performances under the idea of train-test split validation. We will also use cross-validation to tune the hyperparameters for each model and compare their performances in terms of specificity, sensitivity, precision, F1, and AUC-ROC scores.
-
-## Train-Test Split
-
-Considering the imbalanced labels of two classes, it is important to preserve the representation of both classes in the training and testing samples to ensure the model is not overly biasing towards one class over the other. As a consequence, we use `createDataPartition` to create a stratified split for training and testing purposes with a 3:1 ratio. 
+For building predictive statistical learning methods in LIHC classification, we continue with 985 selected genes using Elastic Net, decision tree, and random forest and assess their performances under the idea of train-test split validation. We will also use cross-validation to tune the hyperparameters for each model and compare their performances in terms of specificity, sensitivity, precision, F1, and AUC-ROC scores. \## Train-Test Split Considering the imbalanced labels of two classes, it is important to preserve the representation of both classes in the training and testing samples to ensure the model is not overly biasing towards one class over the other. As a consequence, we use `createDataPartition` to create a stratified split for training and testing purposes with a 3:1 ratio.
 
 ```{r}
 set.seed(123)
@@ -197,7 +200,8 @@ result.decision = confusionMatrix(factor(rt_pred), test_label)$byClass[c(1, 2, 5
 ```
 
 ## Random Forest
-Random Forest is an ensemble learning method that combines multiple decision trees to improve the performance of the model. It works by building multiple decision trees on different subsets of the data and then averaging the predictions of all the trees. The random forest model is more robust to overfitting and less sensitive to outliers than a single decision tree. Here, we use the `randomForest` function to build the random forest model and tune the hyperparameters by cross validation. 
+
+Random Forest is an ensemble learning method that combines multiple decision trees to improve the performance of the model. It works by building multiple decision trees on different subsets of the data and then averaging the predictions of all the trees. The random forest model is more robust to overfitting and less sensitive to outliers than a single decision tree. Here, we use the `randomForest` function to build the random forest model and tune the hyperparameters by cross validation.
 
 ```{r}
 set.seed(123)
@@ -207,7 +211,7 @@ rf.pred = predict(rf, newdata = testX)
 result.rf = confusionMatrix(factor(rf.pred), test_label)$byClass[c(1, 2, 5, 7)]
 ```
 
-Further, we explore the the variable importance, we consider two types of measure of variable importance: Mean Decrease Accuracy and Mean Decrease Gini. We see the gene TSPAN6 is the most important predictor in Mean Decrease Accuracy and in Mean Decrease Gini, which is consistent with the results of the decision tree and elastic net regression. 
+Further, we explore the the variable importance, we consider two types of measure of variable importance: Mean Decrease Accuracy and Mean Decrease Gini. We see the gene TSPAN6 is the most important predictor in Mean Decrease Accuracy and in Mean Decrease Gini, which is consistent with the results of the decision tree and elastic net regression.
 
 ```{r}
 imp <- rf$importance
@@ -218,7 +222,8 @@ genes <- rowData(tcga_data_LIHC)[which(variables %in% names), "gene_name"]; gene
 ```
 
 ## Discussion
-Overall, the three statistical learning methods have similar performance in terms of specificity and raw accuracy, and they all successfully identify similar genes as the most important predictors ("TSPAN6", "TNMD", "DPM1", "SCYL3", "C1orf112", "FGR"). However, the single decision tree model has the lowest sensitivity, F1 score, and AUC-ROC score, which indicates that the model is overfitting. Comparably, the elastic net regression model and the random forest model are more robust to such unbalanced dataset.
+
+Overall, the three statistical learning methods have similar performance in terms of specificity and raw accuracy, and they all successfully identify similar genes as the most important predictors ("TSPAN6", "TNMD", "DPM1", "SCYL3", "C1orf112", "FGR"). However, the single decision tree model has the lowest sensitivity, F1 score, and AUC-ROC score, which indicates that the model is overfitting. Comparably, the elastic net regression model and the random forest model are more robust to such unbalanced dataset. All code is avaliable in github: <https://github.com/rrrrn/LIHC625/tree/main>
 
 ```{r}
 data.frame(elastic = result.elastic, decision = result.decision, rf = result.rf)
@@ -235,5 +240,12 @@ plot.roc(test_label, rf_prob[,2], percent=TRUE, col="#b237b8", lty=2, lwd=2, pri
 legend("bottomright", legend=c("Elastic Net", "Decision Tree", "Random Forest"), col=c("#377eb8", "#4daf4a","#b237b8"), lwd=2)
 ```
 
-## References
+## Member Contribution
 
+| Member     | Contribution                                                                                             |
+|----------|-------------------------------------------------------------|
+| Bo Yang    | Data Preprocessing, Data analysis, write LIHC data from TCGA and Preprocessing part in the report        |
+| Rui Nie    | Variable Selection ,Data analysis, write Introduction, Variable Selection and Elastic Net part in report |
+| Yueying Hu | Data collection, Data analysis, write Discussion, Decision Tree, Random Forest part in report            |
+
+## References
